@@ -8,15 +8,6 @@ from langchain_community.document_loaders import TextLoader
 
 
 def main():
-
-    # model = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0)
-    # response = model.invoke("")
-    # print(f"Model test response: {response}")
-
-    loader = TextLoader("/home/tholvimaaran/doc.txt")
-    documents = loader.load()
-    print(f"Loaded documents: {documents}")
-
 if __name__ == "__main__":
     main()
 
