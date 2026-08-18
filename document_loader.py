@@ -11,13 +11,14 @@ from langchain_community.document_loaders import (
 import os
 from urllib.parse import urlparse
 
+
 LOADERS = {
     "pymupdf": PyMuPDFLoader,
     "unstructured_pdf": UnstructuredPDFLoader,
     "markdown": UnstructuredMarkdownLoader,
     "docx": UnstructuredWordDocumentLoader,
     "text": TextLoader,
-    "web": WebBaseLoader,       
+    "web": WebBaseLoader,
     "file": UnstructuredFileLoader
 }
 
@@ -48,7 +49,19 @@ def detect_loader_for_source(source: str):
 
         case _:
             return LOADERS["file"]
-        
+
+
+def load_documents(source: str):
+    loader_cls = detect_loader_for_source(source)
+
+    print(f"Selected Loader : {loader_cls.__name__}")
+
+    loader = loader_cls(source)
+    docs = loader.load()
+
+    return docs
+
+
 if __name__ == "__main__":
     import sys
 
@@ -57,14 +70,8 @@ if __name__ == "__main__":
         exit(1)
 
     source = sys.argv[1]
-    
 
-    loader_cls = detect_loader_for_source(source)
-
-    print(f"Selected Loader : {loader_cls.__name__}")
-
-    loader = loader_cls(source)
-    docs = loader.load()
+    docs = load_documents(source)
 
     print(f"Documents Loaded : {len(docs)}")
 
