@@ -5,10 +5,9 @@ from document_loader import load_documents
 from chunking import split_documents
 
 
-model = SentenceTransformer(
-    "BAAI/bge-small-en-v1.5",
-    device="cpu"
-)
+# Embedding configuration
+EMBEDDING_MODEL = "BAAI/bge-small-en-v1.5"
+EMBEDDING_DEVICE = "cpu"
 
 
 def load_embedding_model() -> SentenceTransformer:
@@ -19,7 +18,10 @@ def load_embedding_model() -> SentenceTransformer:
         Loaded SentenceTransformer embedding model.
     """
 
-    return SentenceTransformer(EMBEDDING_MODEL)
+    return SentenceTransformer(
+        EMBEDDING_MODEL,
+        device=EMBEDDING_DEVICE
+    )
 
 
 def generate_embeddings(
@@ -69,11 +71,6 @@ def main() -> None:
     print(f"Chunks created   : {len(chunks)}")
     print(f"Embeddings       : {len(embeddings)}")
     print(f"Dimensions       : {len(embeddings[0])}")
-
-    # Inspect the first embedding
-    print("\nFirst embedding:")
-    print(embeddings[0])
-
-
+    
 if __name__ == "__main__":
     main()
