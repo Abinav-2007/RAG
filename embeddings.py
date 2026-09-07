@@ -17,7 +17,7 @@ def load_embedding_model() -> SentenceTransformer:
     Returns:
         Loaded SentenceTransformer embedding model.
     """
-
+    
     return SentenceTransformer(
         EMBEDDING_MODEL,
         device=EMBEDDING_DEVICE
@@ -71,6 +71,6 @@ def main() -> None:
     print(f"Chunks created   : {len(chunks)}")
     print(f"Embeddings       : {len(embeddings)}")
     print(f"Dimensions       : {len(embeddings[0])}")
-    
+
 if __name__ == "__main__":
     main()

@@ -24,7 +24,7 @@ LOADERS = {
 
 
 def _is_url(source: str) -> bool:
-    p = urlparse(source)
+    p = urlparse(source) 
     return p.scheme in ("http", "https")
 
 
