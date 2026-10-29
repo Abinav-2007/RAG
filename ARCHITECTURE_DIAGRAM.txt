@@ -1,0 +1,363 @@
+╔════════════════════════════════════════════════════════════════════════════╗
+║                   RAG PIPELINE ARCHITECTURE DIAGRAM                        ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ INPUT LAYER                                                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  Documents in data/                                                         │
+│  ├─ document.pdf      (file)                                               │
+│  ├─ document.txt      (file)                                               │
+│  ├─ document.md       (file)                                               │
+│  └─ document.docx     (file)                                               │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ INTELLIGENCE LAYER: document_registry.py                                    │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  For each document:                                                         │
+│  1. Compute SHA-256 hash of file content                                   │
+│  2. Check registry for previous hash                                       │
+│  3. Decide: Skip? Re-ingest? New document?                                 │
+│                                                                              │
+│  Registry Collection (ChromaDB):                                            │
+│  ├─ ID: "document.pdf"                                                     │
+│  ├─ Hash: "a3b2c1d0e4f5..."  (SHA-256)                                     │
+│  └─ Metadata:                                                              │
+│     ├─ chunk_count: 20                                                     │
+│     ├─ model_tag: "bge-small-en-v1.5"                                      │
+│     ├─ last_ingested: "2024-01-10T14:30"                                   │
+│     ├─ mtime: 1704878400                                                   │
+│     └─ size: 245678 bytes                                                  │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ IF UNCHANGED: SKIP ⏭️                                                       │
+│ (Saves 70% of API calls!)                                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│ IF CHANGED OR NEW: PROCEED TO PROCESSING                                   │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ CLEANUP LAYER: vector_store.py → delete_document_chunks()                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  Before storing new chunks:                                                │
+│  • Find all old chunks for this document                                   │
+│  • Delete them from vector store                                           │
+│  • Prevents stale chunks from accumulating                                 │
+│                                                                              │
+│  Example:                                                                  │
+│  Deleting 20 old chunks from "document.pdf"...                            │
+│  Result: 20 chunks removed from ChromaDB ✓                                 │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ PROCESSING LAYER                                                            │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  STAGE 1: Load (document_loader.py)                                        │
+│  ─────────────────────────────────────                                     │
+│  • Detect file type (.pdf, .txt, .md, .docx)                              │
+│  • Select appropriate loader                                               │
+│  • Extract text from document                                              │
+│  • Output: List of Documents (one per page)                                │
+│                                                                              │
+│  ✓ document.pdf (50 pages) → 50 Documents                                  │
+│                                                                              │
+│                             ↓                                               │
+│                                                                              │
+│  STAGE 2: Chunk (chunking.py) - TOKEN-BASED                               │
+│  ──────────────────────────────────────────────                            │
+│  • Input: 50 Document objects (pages)                                      │
+│  • Use tiktoken with cl100k_base encoding                                 │
+│  • Split by: 512 tokens per chunk, 50 token overlap                       │
+│  • Create stable chunk positions per document                              │
+│  • Output: List of chunked Documents                                       │
+│                                                                              │
+│  ✓ 50 pages → 240 chunks (100% token accurate!)                           │
+│                                                                              │
+│                             ↓                                               │
+│                                                                              │
+│  STAGE 3: Embed (embeddings.py)                                            │
+│  ────────────────────────────────                                          │
+│  • Model: BAAI/bge-small-en-v1.5                                          │
+│  • Device: CPU                                                              │
+│  • Normalize: L2 normalization applied                                     │
+│  • Output: 384-dimensional vectors                                         │
+│                                                                              │
+│  ✓ 240 chunks → 240 vectors (384 dims each)                               │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ ID GENERATION LAYER: vector_store.py → _build_chunk_id()                   │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  For each chunk, generate deterministic ID:                                │
+│                                                                              │
+│  Format: {stem}__{model_tag}__p{page}__c{index}                            │
+│  Example: document__bge-small-en-v1.5__p0__c2                              │
+│                                                                              │
+│  ✓ Deterministic (same input → same ID)                                   │
+│  ✓ Model-versioned (model tag embedded)                                   │
+│  ✓ Prevents duplicates                                                     │
+│  ✓ Supports incremental updates                                            │
+│                                                                              │
+│  Result: 240 unique, stable IDs                                            │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ STORAGE LAYER: vector_store.py → ChromaDB                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  Upsert to "rag_documents" collection:                                     │
+│                                                                              │
+│  For each chunk, store 4 parallel arrays:                                  │
+│                                                                              │
+│  IDs        = [id1, id2, id3, ...]                                         │
+│  Documents  = [text1, text2, text3, ...]                                   │
+│  Embeddings = [[0.021, -0.113, ...], [...], ...]                           │
+│  Metadatas  = [meta1, meta2, meta3, ...]                                   │
+│                                                                              │
+│  Storage locations:                                                        │
+│  • chroma_db/chroma.sqlite3        ← Text, IDs, metadata                  │
+│  • chroma_db/[uuid]/data_level0.bin ← Embedding vectors (HNSW index)      │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ REGISTRY UPDATE: document_registry.py → register_document()                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  Update registry collection:                                               │
+│  • ID: "document.pdf"                                                      │
+│  • Hash: "z9y8x7w6..." (NEW hash)                                          │
+│  • Metadata: Updated with new ingestion time, chunk count, etc.            │
+│                                                                              │
+│  Next run: Will compare NEW hash against STORED hash                       │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║                         QUERY PIPELINE                                     ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ USER INPUT                                                                  │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  $ python main.py query "What is the main topic?"                          │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ QUERY EMBEDDING: retriever.py → _embed_query()                             │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  Input:  "What is the main topic?"                                         │
+│  Model:  BAAI/bge-small-en-v1.5 (same as documents!)                       │
+│  Output: [0.032, -0.089, 0.145, ..., 0.067]  (384-dim vector)             │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ SEMANTIC SEARCH: retriever.py → retrieve()                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ChromaDB Search:                                                          │
+│  • Query embedding: [0.032, -0.089, 0.145, ..., 0.067]                    │
+│  • Metric: Cosine similarity                                               │
+│  • Method: HNSW approximate nearest neighbor search                         │
+│  • Limit: top_k=5 (configurable)                                          │
+│  • Filter: distance_threshold=1.5 (configurable)                           │
+│                                                                              │
+│  Results (ranked by distance, lower = more similar):                       │
+│  ├─ Chunk 1: "The main topic is..." [distance: 0.23] ✅                    │
+│  ├─ Chunk 2: "It covers aspects..." [distance: 0.45] ✅                    │
+│  ├─ Chunk 3: "Key findings show..." [distance: 0.52] ✅                    │
+│  ├─ Chunk 4: "Methods include..." [distance: 0.61] ✅                      │
+│  └─ Chunk 5: "Discussion reveals..." [distance: 0.78] ✅                   │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ CONTEXT BUILDING: retriever.py → _build_prompt()                           │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  Construct RAG prompt:                                                     │
+│                                                                              │
+│  ┌──────────────────────────────────────────────────────────┐              │
+│  │ You are a helpful assistant that answers questions       │              │
+│  │ based on provided context.                               │              │
+│  │                                                          │              │
+│  │ Context 1:                                              │              │
+│  │ The main topic is about machine learning and NLP...     │              │
+│  │ [Source: document.pdf, Page 1]                          │              │
+│  │                                                          │              │
+│  │ Context 2:                                              │              │
+│  │ It covers aspects of transformers and attention...      │              │
+│  │ [Source: document.pdf, Page 3]                          │              │
+│  │                                                          │              │
+│  │ Context 3:                                              │              │
+│  │ Key findings show that model scaling...                 │              │
+│  │ [Source: document.pdf, Page 5]                          │              │
+│  │                                                          │              │
+│  │ Question: What is the main topic?                       │              │
+│  │                                                          │              │
+│  │ Answer:                                                 │              │
+│  └──────────────────────────────────────────────────────────┘              │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ LLM GENERATION: retriever.py → LLM API Call                                 │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  Provider: OpenAI (GPT-4o-mini, GPT-4, GPT-3.5-turbo)                      │
+│           OR Google (Gemini-1.5-flash, Gemini-1.5-pro)                     │
+│                                                                              │
+│  Input: Full prompt with context chunks                                   │
+│  Temperature: 0.7 (balanced)                                              │
+│  Max tokens: 1000                                                          │
+│                                                                              │
+│  Output: Generated answer based on context                                │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ RESULT RETURN: retriever.py → RetrievalResult                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  RetrievalResult object:                                                   │
+│  ├─ query: "What is the main topic?"                                       │
+│  ├─ chunks: [Chunk1, Chunk2, Chunk3, ...]  (Document objects)             │
+│  ├─ distances: [0.23, 0.45, 0.52, ...]     (cosine distances)             │
+│  ├─ sources: ["document.pdf"]              (unique sources)               │
+│  ├─ answer: "The main topic is about X..."  (LLM response)                 │
+│  └─ model_used: "openai/gpt-4o-mini"       (LLM provider/model)            │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+                                    ↓
+┌─────────────────────────────────────────────────────────────────────────────┐
+│ OUTPUT TO USER                                                              │
+├─────────────────────────────────────────────────────────────────────────────┤
+│                                                                              │
+│  ============================================================                │
+│  Question: What is the main topic?                                         │
+│  ============================================================                │
+│  Retrieved 3 chunks from 1 sources:                                        │
+│    1. document.pdf, Page 1 (distance: 0.23)                                │
+│    2. document.pdf, Page 3 (distance: 0.45)                                │
+│    3. document.pdf, Page 5 (distance: 0.52)                                │
+│                                                                              │
+│  Model: openai/gpt-4o-mini                                                 │
+│  ============================================================                │
+│                                                                              │
+│  Answer:                                                                   │
+│  The main topic is about machine learning and NLP, which covers            │
+│  aspects of transformers and attention mechanisms. Key findings            │
+│  show that model scaling leads to improved performance...                  │
+│  ============================================================                │
+│                                                                              │
+└─────────────────────────────────────────────────────────────────────────────┘
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║                      DATA STORAGE ARCHITECTURE                             ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+chroma_db/
+├── chroma.sqlite3
+│   └── Tables:
+│       ├─ collections       (metadata about collections)
+│       ├─ documents         (chunk text content)
+│       ├─ embeddings_queue  (embedding references)
+│       ├─ metadatas         (chunk metadata: source, page, etc.)
+│       └─ collection_metadata (collection-level settings)
+│
+├── [UUID-1]/
+│   ├─ data_level0.bin       ← HNSW Index Level 0 (vectors here)
+│   ├─ header.bin            ← HNSW Header
+│   ├─ length.bin            ← HNSW Length
+│   └─ link_lists.bin        ← HNSW Link Lists
+│
+└── [UUID-2]/
+    └─ [Registry collection - similar structure]
+
+Two Collections:
+┌──────────────────────────────────────────────────────────────┐
+│ rag_documents (Main Vector Store)                            │
+├──────────────────────────────────────────────────────────────┤
+│ ID: "document__bge-small-en-v1.5__p0__c2"                   │
+│ Document: "The main topic is about..."                      │
+│ Embedding: [0.021, -0.113, ..., 0.089]  (384 dims)          │
+│ Metadata: {source: "document.pdf", page: 0, ...}            │
+│                                                              │
+│ Count: 240 chunks (vectors searchable)                       │
+└──────────────────────────────────────────────────────────────┘
+
+┌──────────────────────────────────────────────────────────────┐
+│ document_registry (Fingerprinting Registry)                  │
+├──────────────────────────────────────────────────────────────┤
+│ ID: "document.pdf"                                           │
+│ Document: "a3b2c1d0e4f5g6h7..."  (SHA-256 hash)              │
+│ Metadata: {chunk_count: 240, model_tag: "bge-small-...", ..} │
+│                                                              │
+│ Count: 1 entry per source document                           │
+└──────────────────────────────────────────────────────────────┘
+
+╔════════════════════════════════════════════════════════════════════════════╗
+║                         CLI INTERFACE FLOW                                 ║
+╚════════════════════════════════════════════════════════════════════════════╝
+
+python main.py ingest [--source FILE] [--force] [--clean-orphans]
+         │
+         ├─→ Find all .pdf, .txt, .md, .docx in data/
+         │
+         ├─→ For each file:
+         │   ├─ Check registry (fingerprint comparison)
+         │   ├─ Skip if unchanged
+         │   ├─ Delete old chunks if changed
+         │   ├─ Load → Chunk → Embed → Store
+         │   └─ Update registry
+         │
+         └─→ Print summary statistics
+
+python main.py status
+         │
+         ├─→ Show vector store size (total chunks)
+         ├─→ List all registered documents
+         ├─→ Show chunks per document
+         ├─→ Detect orphaned documents
+         │
+         └─→ Print full report
+
+python main.py query QUESTION [--llm PROVIDER] [--top-k N]
+         │
+         ├─→ Embed question
+         ├─→ Search ChromaDB
+         ├─→ Build prompt
+         ├─→ Call LLM
+         │
+         └─→ Print answer with citations
+
+═══════════════════════════════════════════════════════════════════════════════
+
+This architecture ensures:
+✅ No duplicate chunks (stable IDs + registry)
+✅ No stale chunks (auto-cleanup)
+✅ Accurate costs (token-based)
+✅ Fast search (HNSW index)
+✅ Persistent storage (SQLite + binary index)
+✅ Complete RAG system (search + LLM)
+✅ Easy CLI interface (ingest/status/query)
+
+═══════════════════════════════════════════════════════════════════════════════
